@@ -3,6 +3,8 @@ package ywzb
 import (
 	"bytes"
 	"crypto/sha256"
+	"math"
+	"math/big"
 	"strconv"
 	"time"
 )
@@ -12,13 +14,42 @@ type Block struct {
 	Data          []byte // In Bitcoin specification, transactions (Data in there) are separate data structure
 	PrevBlockHash []byte
 	Hash          []byte
+	Nonce         int64 // A cryptographic term from Hashcash description
+	Difficulty    int64
+}
+
+func (b *Block) ProofOfWork() (int64, []byte) {
+	target := big.NewInt(1)
+	target.Lsh(target, uint(256-b.Difficulty))
+
+	nonce := 0
+	var hashInt big.Int
+	var hash [32]byte
+
+	for nonce < math.MaxInt64 {
+		data := bytes.Join([][]byte{
+			[]byte(strconv.FormatInt(b.Timestamp, 10)),
+			b.Data,
+			b.PrevBlockHash,
+			[]byte(strconv.FormatInt(b.Difficulty, 10)),
+			[]byte(strconv.FormatInt(int64(nonce), 10)),
+		}, []byte{})
+		hash = sha256.Sum256(data)
+		hashInt.SetBytes(hash[:])
+
+		if hashInt.Cmp(target) == -1 {
+			break
+		} else {
+			nonce++
+		}
+	}
+	return int64(nonce), hash[:]
 }
 
 func (b *Block) calculateAndSetHash() {
-	timestamp := []byte(strconv.FormatInt(b.Timestamp, 10))
-	headers := bytes.Join([][]byte{b.PrevBlockHash, b.Data, timestamp}, []byte{})
-	hash := sha256.Sum256(headers)
-	b.Hash = hash[:]
+	nonce, h := b.ProofOfWork()
+	b.Nonce = nonce
+	b.Hash = h
 }
 
 type BlockChain struct {
@@ -27,8 +58,8 @@ type BlockChain struct {
 
 func (bc *BlockChain) AddBlock(data string) {
 	prevBlock := bc.Blocks[len(bc.Blocks)-1]
-	newBlock := newBlock(data, prevBlock.Hash)
-	bc.Blocks = append(bc.Blocks, newBlock)
+	b := newBlock(data, prevBlock.Hash)
+	bc.Blocks = append(bc.Blocks, b)
 }
 
 func newBlock(data string, prevBlockHash []byte) *Block {
@@ -37,6 +68,7 @@ func newBlock(data string, prevBlockHash []byte) *Block {
 		Data:          []byte(data),
 		PrevBlockHash: prevBlockHash,
 		Hash:          []byte{},
+		Difficulty:    int64(24),
 	}
 	block.calculateAndSetHash()
 	return block
